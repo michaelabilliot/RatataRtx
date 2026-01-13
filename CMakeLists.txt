@@ -7,5 +7,5 @@ set(RATATAR_OUTPUT_DIR "${CMAKE_BINARY_DIR}/RatataR")
 
 add_subdirectory(external/minhook)
 add_subdirectory(external/discord-rpc)
-add_subdirectory(app)
+add_subdirectory(RatataR)
 add_subdirectory(hook)

@@ -8,9 +8,9 @@
 #include <string.h>
 #include <time.h>
 #include <iostream>
-#include "discord_manager.h"
+#include "rpc-client/discord_manager.h"
 #include "discord_rpc.h"
-#include "levels.h"
+#include "rpc-client/levels.h"
 
 static DiscordRichPresence discordPresence;
 

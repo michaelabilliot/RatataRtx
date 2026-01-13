@@ -5,11 +5,13 @@
 #include <vector>
 #include <sstream>
 #include <d3d9.h>
-#include "rpc.h"
-#include "levels.h"
+#include "rpc-client/rpc.h"
+#include "rpc-client/levels.h"
 #include "DynArray_Z.h"
 #include "MinHook.h"
-#include "config_handler.h"
+#include "ConfigHandler.h"
+#include "MemoryUtils.h"
+#include "SigScanner.h"
 
 HANDLE readyEvent = nullptr;
 
@@ -43,7 +45,7 @@ static char** systemDatasPtr = nullptr;
 static char** rdrPtr = nullptr;
 static char** classMgrPtr = nullptr;
 static char* (__fastcall* getPtr)(char* classMgr, int unused, hdl* id) = nullptr;
-static char* (__fastcall* drawString)(char* font, int unused, FontParam_Z* fontParam) = nullptr;
+static char* (__fastcall* drawStringFn)(char* font, int unused, FontParam_Z* fontParam) = nullptr;
 
 using EndScene_t = HRESULT(__stdcall*)(IDirect3DDevice9*);
 EndScene_t static oEndScene = nullptr;
@@ -132,7 +134,7 @@ struct PatchAddresses
     uintptr_t patchAllowBannedSaveNames;
 
     uintptr_t patchAllowMultiInstances1;
-    uintptr_t PatchAllowMultiInstances2;
+    uintptr_t patchAllowMultiInstances2;
 
     uintptr_t patchFog;
 
@@ -154,17 +156,17 @@ struct PatchAddresses
 
     uintptr_t defaultFarValue;
 
-    uintptr_t levelIdBaseAddr;
-    uintptr_t playerObjectsAddr;
-    uintptr_t getIDAddr;
+    uintptr_t levelIdBase;
+    uintptr_t playerObjects;
+    uintptr_t getID;
 
-    uintptr_t systemDatasPtrAddr;
-    uintptr_t rdrPtrAddr;
-    uintptr_t classMgrPtrAddr;
-    uintptr_t getPtrAddr;
-    uintptr_t drawStringAddr;
+    uintptr_t systemDatasPtr;
+    uintptr_t rdrPtr;
+    uintptr_t classMgrPtr;
+    uintptr_t getFontPtr;
+    uintptr_t drawStringFn;
 
-    uintptr_t patchDrawFpsAddr;
+    uintptr_t patchDrawFps;
 };
 
 std::string rootDirectory;
@@ -175,60 +177,17 @@ struct ModuleInfo {
     size_t size;
 };
 
-uintptr_t ReadPtr32(uintptr_t address)
-{
-    return *reinterpret_cast<uintptr_t*>(address);
-}
-
-std::vector<int> PatternToBytes(const std::string& pattern)
-{
-    std::vector<int> bytes;
-    std::istringstream stream(pattern);
-    std::string byte;
-
-    while (stream >> byte) {
-        if (byte == "??")
-            bytes.push_back(-1);
-        else
-            bytes.push_back(std::stoi(byte, nullptr, 16));
-    }
-
-    return bytes;
-}
-
 ModuleInfo GetMainModule()
 {
-    HMODULE main = GetModuleHandle(nullptr);
+    HMODULE mainMod = GetModuleHandle(nullptr);
 
     MODULEINFO info{};
-    GetModuleInformation(GetCurrentProcess(), main, &info, sizeof(info));
+    GetModuleInformation(GetCurrentProcess(), mainMod, &info, sizeof(info));
 
     return {
         .base = (uintptr_t)info.lpBaseOfDll,
         .size = (size_t)info.SizeOfImage
     };
-}
-
-uintptr_t FindSignature(uintptr_t base, size_t size, const std::string& pattern)
-{
-    auto bytes = PatternToBytes(pattern);
-    size_t patternSize = bytes.size();
-
-    for (size_t i = 0; i <= size - patternSize; i++) {
-        bool found = true;
-
-        for (size_t j = 0; j < patternSize; j++) {
-            if (bytes[j] != -1 && bytes[j] != *(uint8_t*)(base + i + j)) {
-                found = false;
-                break;
-            }
-        }
-
-        if (found)
-            return base + i;
-    }
-
-    return 0;
 }
 
 bool getSignatures(PatchAddresses& address)
@@ -316,7 +275,7 @@ bool getSignatures(PatchAddresses& address)
     // Currently optional
     FIND_SIG(address.patchAllowMultiInstances1,
         "74 ?? 6a ?? 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 6a");
-    FIND_SIG(address.PatchAllowMultiInstances2,
+    FIND_SIG(address.patchAllowMultiInstances2,
         "75 ?? 8b 0d ?? ?? ?? ?? 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 68");
 
     FIND_SIG_OR_FAIL(address.patchFog, "0f 84 ?? ?? ?? ?? 80 78");
@@ -343,25 +302,25 @@ bool getSignatures(PatchAddresses& address)
         "0f 85 ?? ?? ?? ?? 8b 86 ?? ?? ?? ?? 25 ?? ?? ?? ?? 33 c9 3d ?? ?? ?? ?? 75 ?? 3b cb 74");
 
     FIND_SIG_OR_FAIL(ptr, "8B 0D ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 8B 48 ?? 89 4E");
-    address.levelIdBaseAddr = ReadPtr32(ptr + 0x2);
+    address.levelIdBase = ReadPtr32(ptr + 0x2);
 
-    FIND_SIG_OR_FAIL(address.getIDAddr, "8b 54 24 ?? 8a 0a");
+    FIND_SIG_OR_FAIL(address.getID, "8b 54 24 ?? 8a 0a");
 
     FIND_SIG_OR_FAIL(ptr, "8b 15 ?? ?? ?? ?? 8b 1c 82");
-    address.playerObjectsAddr = ReadPtr32(ptr + 0x2);
+    address.playerObjects = ReadPtr32(ptr + 0x2);
 
     FIND_SIG_OR_FAIL(ptr, "8b 0d ?? ?? ?? ?? 85 c9 74 ?? e8 ?? ?? ?? ?? 8b 0d ?? ?? ?? ?? 85 c9 74 ?? e8 ?? ?? ?? ?? 8b 0d ?? ?? ?? ?? 85 c9 74 ?? 8b 11 8b 42 ?? ff d0 8b 0d");
-    address.systemDatasPtrAddr = ReadPtr32(ptr + 0x2);
+    address.systemDatasPtr = ReadPtr32(ptr + 0x2);
 
     FIND_SIG_OR_FAIL(ptr, "a1 ?? ?? ?? ?? 8b 90 ?? ?? ?? ?? 8b 80 ?? ?? ?? ?? 89 54 24");
-    address.rdrPtrAddr = ReadPtr32(ptr + 0x1);
+    address.rdrPtr = ReadPtr32(ptr + 0x1);
     
     FIND_SIG_OR_FAIL(ptr, "8b 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c2 ?? ?? cc cc cc cc cc cc 8b 44 24");
-    address.classMgrPtrAddr = ReadPtr32(ptr + 0x2);
+    address.classMgrPtr = ReadPtr32(ptr + 0x2);
 
-    FIND_SIG_OR_FAIL(address.getPtrAddr, "83 05 ?? ?? ?? ?? ?? 8b 54 24");
-    FIND_SIG_OR_FAIL(address.drawStringAddr, "55 8b ec 83 e4 ?? 81 ec ?? ?? ?? ?? 53 56 8b 75 ?? 80 7e ?? ?? d9 46");
-    FIND_SIG_OR_FAIL(address.patchDrawFpsAddr, "e8 ?? ?? ?? ?? 8b e5 5d c2 ?? ?? cc cc cc cc cc cc cc cc cc e8");
+    FIND_SIG_OR_FAIL(address.getFontPtr, "83 05 ?? ?? ?? ?? ?? 8b 54 24");
+    FIND_SIG_OR_FAIL(address.drawStringFn, "55 8b ec 83 e4 ?? 81 ec ?? ?? ?? ?? 53 56 8b 75 ?? 80 7e ?? ?? d9 46");
+    FIND_SIG_OR_FAIL(address.patchDrawFps, "e8 ?? ?? ?? ?? 8b e5 5d c2 ?? ?? cc cc cc cc cc cc cc cc cc e8");
 
     return true;
 }
@@ -578,16 +537,14 @@ bool HookD3D9EndScene() {
     void** vTable = *reinterpret_cast<void***>(pDevice);
     void* pEndScene = vTable[42];
 
-    MH_Initialize();
-    MH_CreateHook(pEndScene, &hkEndScene, reinterpret_cast<void**>(&oEndScene));
-    MH_EnableHook(pEndScene);
+    MH_STATUS hookStatus = MH_CreateHook(pEndScene, &hkEndScene, reinterpret_cast<void**>(&oEndScene));
 
     pDevice->Release();
     pD3D->Release();
     DestroyWindow(hWnd);
     UnregisterClassA("DummyWindow", wc.hInstance);
 
-    return true;
+    return hookStatus == MH_OK;
 }
 
 void patch(BYTE* ptr, BYTE* buf, size_t len) {
@@ -653,9 +610,9 @@ void applyBasePatches(RatataRConfig& cfg) {
     patch((BYTE*)addresses.patchAllowEmptySaveNames, jmp, 1);
     
     //Allow multiple game instances
-    if (addresses.patchAllowMultiInstances1 && addresses.PatchAllowMultiInstances2) {
+    if (addresses.patchAllowMultiInstances1 && addresses.patchAllowMultiInstances2) {
         patch((BYTE*)addresses.patchAllowMultiInstances1, jmp, 1);
-        patch((BYTE*)addresses.PatchAllowMultiInstances2, nop, 2);
+        patch((BYTE*)addresses.patchAllowMultiInstances2, nop, 2);
     }
 
     if (cfg.invertVerticalLook) {
@@ -673,10 +630,10 @@ void applyNonSpeedrunPatches(RatataRConfig& cfg) {
     //Apply FOV
     patch((BYTE*)addresses.bypassFovOverflow, (BYTE*)"\xEB", 1); //BYPASS FOV OVERFLOW ERROR
 
-    auto g_Fov = getFOV(cfg);
-    patch((BYTE*)addresses.fov, reinterpret_cast<BYTE*>(&g_Fov.normal), sizeof(g_Fov.normal));
-    patch((BYTE*)addresses.climbFov, reinterpret_cast<BYTE*>(&g_Fov.climbing), sizeof(g_Fov.climbing));
-    patch((BYTE*)addresses.runSlideFov, reinterpret_cast<BYTE*>(&g_Fov.runningSliding), sizeof(g_Fov.runningSliding));
+    auto fovVal = getFOVValues(cfg.fov);
+    patch((BYTE*)addresses.fov, reinterpret_cast<BYTE*>(&fovVal.normal), 4);
+    patch((BYTE*)addresses.climbFov, reinterpret_cast<BYTE*>(&fovVal.climbing), 4);
+    patch((BYTE*)addresses.runSlideFov, reinterpret_cast<BYTE*>(&fovVal.runningSliding), 8);
 
     if (cfg.improvedViewDistance) {
         //Use default far value
@@ -685,7 +642,7 @@ void applyNonSpeedrunPatches(RatataRConfig& cfg) {
 
         //Set default far value to 500
         float defaultFar = 500.0f;
-        patch((BYTE*)addresses.defaultFarValue, reinterpret_cast<BYTE*>(&defaultFar), sizeof(float));
+        patch((BYTE*)addresses.defaultFarValue, reinterpret_cast<BYTE*>(&defaultFar), 4);
         
         //Remove culling
         patch((BYTE*)addresses.patchRemoveCulling1, (BYTE*)"\xEB", 1);
@@ -750,7 +707,7 @@ static bool PatchCall32(void* callInstrAddr, void* newTarget)
 }
 
 void __fastcall DrawFps() {
-    if (*systemDatasPtr == NULL || *rdrPtr == NULL || *classMgrPtr == NULL || getPtr == 0 || drawString == 0) {
+    if (*systemDatasPtr == NULL || *rdrPtr == NULL || *classMgrPtr == NULL || getPtr == 0 || drawStringFn == 0) {
         return;
     }
     DynArray_Z<hdl>* fonts = (DynArray_Z<hdl>*)(*systemDatasPtr + 0x18);
@@ -792,7 +749,7 @@ void __fastcall DrawFps() {
     fontParam.scale1 = 0.8f;
     fontParam.scale2 = 1.0f;
     fontParam.zOffset = 0.f;
-    drawString(font, 0, &fontParam);
+    drawStringFn(font, 0, &fontParam);
 }
 
 void ApplyHooks(RatataRConfig& cfg) {
@@ -817,15 +774,17 @@ void ApplyHooks(RatataRConfig& cfg) {
     hClipCursorAddress = addresses.hClipCursor;
     hFpsFix1Addr = addresses.hFpsFix1;
     cleanUpFpsFix2 = addresses.hFpsFix2CleanUp;
-    levelIdBaseAddr = addresses.levelIdBaseAddr;
-    playerObjectsAddr = addresses.playerObjectsAddr;
-    getIDAddr = addresses.getIDAddr;
+    levelIdBaseAddr = addresses.levelIdBase;
+    playerObjectsAddr = addresses.playerObjects;
+    getIDAddr = addresses.getID;
 
-    systemDatasPtr = (char**)addresses.systemDatasPtrAddr;
-    rdrPtr = (char**)addresses.rdrPtrAddr;
-    classMgrPtr = (char**)addresses.classMgrPtrAddr;
-    getPtr = (char* (__fastcall*)(char*, int, hdl*))addresses.getPtrAddr;
-    drawString = (char* (__fastcall*)(char*, int, FontParam_Z*))addresses.drawStringAddr;
+    systemDatasPtr = (char**)addresses.systemDatasPtr;
+    rdrPtr = (char**)addresses.rdrPtr;
+    classMgrPtr = (char**)addresses.classMgrPtr;
+    getPtr = (char* (__fastcall*)(char*, int, hdl*))addresses.getFontPtr;
+    drawStringFn = (char* (__fastcall*)(char*, int, FontParam_Z*))addresses.drawStringFn;
+
+    MH_Initialize();
 
     hook((void*)hookAddressCursor, hClipCursor, hookLengthCursor);
     if (cfg.displayMode == DisplayModes::Borderless) {
@@ -866,21 +825,29 @@ void ApplyHooks(RatataRConfig& cfg) {
     }
 
     if (cfg.displayFrameCounter) {
-        PatchCall32((void*)addresses.patchDrawFpsAddr, (void*)&DrawFps);
+        PatchCall32((void*)addresses.patchDrawFps, (void*)&DrawFps);
     }
 
     HookD3D9EndScene();
+    MH_EnableHook(MH_ALL_HOOKS);
 }
 
 DWORD WINAPI MainThread(LPVOID param) {
+    readyEvent = CreateEventA(nullptr, TRUE, FALSE, "RatataR_Patched");
+    if (!readyEvent) {
+        TerminateProcess(GetCurrentProcess(), 0);
+        return 1;
+    }
+
     TCHAR moduleFileName[MAX_PATH];
     GetModuleFileNameA((HMODULE)param, (LPSTR)moduleFileName, MAX_PATH);
     std::string::size_type pos = std::string((char*)moduleFileName).find_last_of("\\/");
     std::string configPath = std::string((char*)moduleFileName).substr(0, pos).append("\\").append("RatataRconfig.ini");
     rootDirectory = std::string((char*)moduleFileName).substr(0, pos);
-
+    
     if (!getSignatures(addresses)) {
         SetEvent(readyEvent);
+        CloseHandle(readyEvent);
         return 0;
     }
 
@@ -898,17 +865,7 @@ DWORD WINAPI MainThread(LPVOID param) {
     ApplyHooks(config);
 
     SetEvent(readyEvent);
+    CloseHandle(readyEvent);
 
     return 0;
-}
-
-BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD dwReason, LPVOID lpReserved) {
-    switch (dwReason) {
-        case DLL_PROCESS_ATTACH:
-            readyEvent = CreateEventA(nullptr, TRUE, FALSE, "RatataR_Patched");
-            DisableThreadLibraryCalls(hModule);
-            CreateThread(nullptr, 0, MainThread, hModule, 0, nullptr);
-            break;
-    }
-    return TRUE;
 }

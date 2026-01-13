@@ -33,7 +33,7 @@ struct RemyFOV {
     double runningSliding = 110.0;
 };
 
-RemyFOV getFOV(RatataRConfig& cfg);
+RemyFOV getFOVValues(unsigned int desired_fov);
 
 class ConfigHandler {
 public:

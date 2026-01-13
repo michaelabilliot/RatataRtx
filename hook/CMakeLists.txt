@@ -1,25 +1,33 @@
-add_library(hook SHARED
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/hook.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/config_handler.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/rpc-client/discord_manager.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/rpc-client/levels.cpp"
-	"${CMAKE_CURRENT_SOURCE_DIR}/src/rpc-client/rpc.cpp"
+add_library(hook
+	SHARED
+		src/main.cpp
+		src/hook.cpp
+		src/ConfigHandler.cpp
+		src/MemoryUtils.cpp
+		src/rpc-client/discord_manager.cpp
+		src/rpc-client/levels.cpp
+		src/rpc-client/rpc.cpp
+		src/SigScanner.cpp
 )
 
-target_link_libraries(hook PRIVATE
-	Winmm
-	d3d9
-	delayimp
-	MinHook
-	discord-rpc
+target_link_libraries(hook
+	PRIVATE
+		Winmm
+		d3d9
+		delayimp
+		MinHook
+		discord-rpc
 )
 
-target_include_directories(hook PRIVATE
-	"${CMAKE_CURRENT_SOURCE_DIR}/include"
-	"${CMAKE_CURRENT_SOURCE_DIR}/include/rpc-client"
+target_include_directories(hook
+	PRIVATE
+		include
 )
 
-target_link_options(hook PRIVATE "/DELAYLOAD:discord-rpc.dll")
+target_link_options(hook
+	PRIVATE
+		"/DELAYLOAD:discord-rpc.dll"
+)
 
 add_custom_command(
 	TARGET hook

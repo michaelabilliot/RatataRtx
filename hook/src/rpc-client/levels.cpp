@@ -1,4 +1,5 @@
-#include "levels.h"
+#include "rpc-client/levels.h"
+#include "MemoryUtils.h"
 
 DWORD levelIdBaseAddr;
 DWORD playerObjectsAddr;
@@ -64,26 +65,6 @@ Level constexpr levelList[] = {
 };
 constexpr int levelCount = sizeof(levelList) / sizeof(Level) - 1;
 
-template<typename T, typename Ptr>
-T* safe_deref_chain(Ptr base, std::initializer_list<uintptr_t> offsets, bool applyOffsetAfterLastDeref) {
-    if (!base) return nullptr;
-    char* addr = reinterpret_cast<char*>(base);
-
-    size_t i = 0;
-    for (auto offset : offsets) {
-        if (!addr) return nullptr;
-
-        addr = *reinterpret_cast<char**>(addr);
-        if (!addr) return nullptr;
-
-        if (i < offsets.size() - 1 || applyOffsetAfterLastDeref) {
-            addr += offset;
-        }
-        i++;
-    }
-    return reinterpret_cast<T*>(addr);
-}
-
 void initRat()
 {
     playerObjects = (int***)playerObjectsAddr;
@@ -92,7 +73,7 @@ void initRat()
 
 Level getLevel()
 {
-    int* levelPtr = safe_deref_chain<int>(levelIdBaseAddr, { 0x8, 0x9C4, 0x7C });
+    int* levelPtr = follow_pointer_chain<int>(levelIdBaseAddr, { 0x8, 0x9C4, 0x7C });
     int levelID = levelPtr ? *levelPtr : 0;
 
     if (levelID < 0 || levelID > levelCount)
@@ -105,7 +86,7 @@ Level getLevel()
 
 const char* getCharName()
 {
-    int* charPtr = safe_deref_chain<int>(playerObjectsAddr, { 0x0, 0x4 });
+    int* charPtr = follow_pointer_chain<int>(playerObjectsAddr, { 0x0, 0x4 });
     int charID = charPtr ? *charPtr : -1;
 
     if (getIDFn) {

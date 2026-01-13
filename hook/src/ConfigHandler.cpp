@@ -1,4 +1,4 @@
-#include "config_handler.h"
+#include "ConfigHandler.h"
 #include <Windows.h>
 #include <string>
 #include <cctype>
@@ -80,11 +80,11 @@ void ConfigHandler::save(const std::string& path) const {
 const RatataRConfig& ConfigHandler::getConfig() const { return cfg; }
 RatataRConfig& ConfigHandler::getConfig() { return cfg; }
 
-RemyFOV getFOV(RatataRConfig& cfg) {
+RemyFOV getFOVValues(unsigned int desired_fov) {
     constexpr float CLIMBING_RATIO = 110.0f / 95.0f;
     constexpr double RUNNING_SLIDING_RATIO = 110.0 / 95.0;
 
-    float userFOV = static_cast<float>(cfg.fov);
+    float userFOV = static_cast<float>(desired_fov);
     return {
         .normal = userFOV,
         .climbing = CLIMBING_RATIO * userFOV,
