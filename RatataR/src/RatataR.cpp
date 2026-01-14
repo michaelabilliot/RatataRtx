@@ -133,7 +133,7 @@ int InjectAndRunHook(void) {
 		CloseHandle(mainThread);
 		return 1;
 	}
-
+	
 	ResumeThread(mainThread);
 
 	CloseHandle(process);

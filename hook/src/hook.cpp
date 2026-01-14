@@ -5,6 +5,7 @@
 #include <vector>
 #include <sstream>
 #include <d3d9.h>
+#include <algorithm>
 #include "rpc-client/rpc.h"
 #include "rpc-client/levels.h"
 #include "DynArray_Z.h"
@@ -12,6 +13,7 @@
 #include "ConfigHandler.h"
 #include "MemoryUtils.h"
 #include "SigScanner.h"
+#include "SignaturePatterns.h"
 
 HANDLE readyEvent = nullptr;
 
@@ -57,24 +59,7 @@ static bool g_TimerInitialized = false;
 static bool g_EnableFrameLimit = false;
 static double g_TargetFPS = 60.0;
 
-bool SigFail(const char* name, const char* pattern) {
-    char buf[1024];
-    sprintf_s(
-        buf,
-        "Signature NOT FOUND:\n\n%s\n\nPattern:\n%s",
-        name,
-        pattern
-    );
-    MessageBoxA(nullptr, buf, "Signature error", MB_ICONERROR | MB_OK);
-    return false;
-}
-
-#define FIND_SIG_OR_FAIL(var, pattern)            \
-        var = FindSignature(base, size, pattern); \
-        if (!(var)) return SigFail(#var, pattern) \
-
-#define FIND_SIG(var, pattern)                   \
-        var = FindSignature(base, size, pattern) \
+std::vector<BYTE> patchCursorHidePatch;
 
 struct PatchAddresses
 {
@@ -91,7 +76,6 @@ struct PatchAddresses
     uintptr_t hFpsFix2CleanUp;
 
     uintptr_t patchCursorHide;
-    std::vector<BYTE> patchCursorHidePatch;
 
     uintptr_t customResPatch1;
     uintptr_t customResPatch2;
@@ -190,7 +174,7 @@ ModuleInfo GetMainModule()
     };
 }
 
-bool getSignatures(PatchAddresses& address)
+void getSignatures(PatchAddresses& address)
 {
     auto mainMod = GetMainModule();
     const uintptr_t base = mainMod.base;
@@ -198,131 +182,238 @@ bool getSignatures(PatchAddresses& address)
 
     uintptr_t ptr = 0;
 
-    FIND_SIG_OR_FAIL(ptr, "8B 15 ?? ?? ?? ?? 8D 4C 24");
-    address.hookAddressCursor = ptr + 0x0C;
-    address.hClipCursor = ReadPtr32(ptr + 0x2);
-
-    FIND_SIG_OR_FAIL(address.hookAddressSetWindowPosPush, "6A ?? 03 C7 50 55");
-    FIND_SIG_OR_FAIL(address.hookAddressConsoleEnable,   "09 81 ?? ?? ?? ?? C2 ?? ?? 81 EC");
-    FIND_SIG_OR_FAIL(address.hookAddressShowConsole,     "21 9E ?? ?? ?? ?? 5E");
-
-    FIND_SIG_OR_FAIL(ptr, "83 05 ?? ?? ?? ?? ?? 80 3D");
-    address.hookAddressFpsFix1 = ptr;
-    address.hookAddressFpsFix2 = ptr + 0x1E;
-    address.hFpsFix1 = ReadPtr32(ptr + 0x2);
-
-    FIND_SIG_OR_FAIL(address.hFpsFix2CleanUp, "53 56 57 E8 ?? ?? ?? ?? 8B 0D");
-
-    ptr = FindSignature(base, size, "F6 05 ?? ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 6A");
+    ptr = FindSignature(base, size, hookAddressCursorSig);
     if (ptr) {
-        address.patchCursorHide = ptr;
-        address.patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x0F,0x85 };
-    } else {
-        FIND_SIG_OR_FAIL(ptr, "F6 05 ?? ?? ?? ?? ?? 74 ?? 6A");
-        address.patchCursorHide = ptr;
-        address.patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x75 };
+        address.hookAddressCursor = ptr + 0x0C;
+        address.hClipCursor = ReadPtr32(ptr + 0x2);
     }
 
-    FIND_SIG_OR_FAIL(ptr, "0E 66 C7 44 24");
-    address.customResPatch1 = ptr;
-    address.customResPatch2 = ptr + 0x6;
-    address.customResPatch3 = ptr + 0x0D;
+    ptr = FindSignature(base, size, hookAddressSetWindowPosPushSig);
+    if (ptr)
+        address.hookAddressSetWindowPosPush = ptr;
 
-    FIND_SIG_OR_FAIL(address.initialWindowPositionPatch, "80 68 ?? ?? C2");
+    ptr = FindSignature(base, size, hookAddressConsoleEnableSig);
+    if (ptr)
+        address.hookAddressConsoleEnable = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "80 68 ?? ?? 00 80");
-    address.notShowingWindowBeforeD3d9DeviceCreatedPatch1 = ptr + 0xA;
-    address.notShowingWindowBeforeD3d9DeviceCreatedPatch2 = ptr;
+    ptr = FindSignature(base, size, hookAddressShowConsoleSig);
+    if (ptr)
+        address.hookAddressShowConsole = ptr;
 
-    FIND_SIG_OR_FAIL(address.patchWindowed, "89 8D ?? ?? ?? ?? 89 0E");
-    FIND_SIG_OR_FAIL(address.patchWindowPosBorderlessOrBorder, "AE 01 00 00 6A");
-    FIND_SIG_OR_FAIL(address.patchBorderless, "CA ?? ?? F0 ?? FF 15");
-    FIND_SIG_OR_FAIL(address.patchWindowKey, "16 51 50");
+    ptr = FindSignature(base, size, hookAddressFpsFixSig);
+    if (ptr) {
+        address.hookAddressFpsFix1 = ptr;
+        address.hookAddressFpsFix2 = ptr + 0x1E;
+        address.hFpsFix1 = ReadPtr32(ptr + 0x2);
+    }
 
-    FIND_SIG_OR_FAIL(address.bypassDiscRequirementPatch1, "0F 85 ?? ?? ?? ?? 8D 84 24 ?? ?? ?? ?? 8B D6");
+    ptr = FindSignature(base, size, hFpsFix2CleanUpSig);
+    if (ptr)
+        address.hFpsFix2CleanUp = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "74 ?? 53 53 8D 44 24");
-    address.bypassDiscRequirementPatch2 = ptr;
-    address.bypassDiscRequirementPatch3 = ptr + 0x3E;
+    ptr = FindSignature(base, size, patchCursorHideSig1);
+    if (ptr) {
+        address.patchCursorHide = ptr;
+        patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x0F,0x85 };
+    } else {
+        ptr = FindSignature(base, size, patchCursorHideSig2);
+        address.patchCursorHide = ptr;
+        patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x75 };
+    }
 
-    FIND_SIG_OR_FAIL(ptr, "B8 ?? ?? ?? ?? 8D 50 ?? 8B FF");
-    address.musicVideoDirectory = ReadPtr32(ptr + 0x1);
+    ptr = FindSignature(base, size, customResPatchSig);
+    if (ptr) {
+        address.customResPatch1 = ptr;
+        address.customResPatch2 = ptr + 0x6;
+        address.customResPatch3 = ptr + 0x0D;
+    }
 
-    FIND_SIG_OR_FAIL(ptr, "C7 06 ?? ?? ?? ?? 88 9E ?? ?? ?? ?? 88 9E");
-    address.stopMusicVideoDirectoryOverwrite = ptr + 0x36;
+    ptr = FindSignature(base, size, initialWindowPosPatchSig);
+    if (ptr)
+        address.initialWindowPositionPatch = ptr;
 
-    FIND_SIG_OR_FAIL(address.bypassFovOverflow,
-        "74 ?? 6A ?? DD D8 6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 68 ?? ?? ?? ?? "
-        "6A ?? 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? D9 44 24 ?? "
-        "83 C4 ?? D9 9E ?? ?? ?? ?? 5E C2 ?? ?? CC CC CC CC CC CC CC CC");
+    ptr = FindSignature(base, size, notShowingWindowBeforeD3d9DeviceCreatedPatchSig);
+    if (ptr) {
+        address.notShowingWindowBeforeD3d9DeviceCreatedPatch1 = ptr + 0xA;
+        address.notShowingWindowBeforeD3d9DeviceCreatedPatch2 = ptr;
+    }
 
-    FIND_SIG_OR_FAIL(address.fov,        "00 00 BE 42");
-    FIND_SIG_OR_FAIL(address.climbFov,   "00 00 DC 42");
-    FIND_SIG_OR_FAIL(address.runSlideFov,"00 00 00 00 00 80 5B 40");
+    ptr = FindSignature(base, size, patchWindowedSig);
+    if (ptr)
+        address.patchWindowed = ptr;
 
-    FIND_SIG_OR_FAIL(address.patchConsole, "83 E0 ?? 09 81");
-    FIND_SIG_OR_FAIL(address.patchPopupMenu0, "74 ?? 8B 15 ?? ?? ?? ?? 8D 4C 24");
-    FIND_SIG_OR_FAIL(address.patchPopupMenu1, "09 05 ?? ?? ?? ?? 8B 95");
-    FIND_SIG_OR_FAIL(address.patchRemoveFpsCap, "6A ?? FF 15 ?? ?? ?? ?? 8B 3D");
-    FIND_SIG_OR_FAIL(address.patchInvertVerticalLook, "00 D9 45 00 74 06");
+    ptr = FindSignature(base, size, patchWindowPosBorderlessOrBorderSig);
+    if (ptr)
+        address.patchWindowPosBorderlessOrBorder = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "C6 82 ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 F8");
-    address.patchAutoSave = ptr - 0x6;
+    ptr = FindSignature(base, size, patchBorderlessSig);
+    if (ptr)
+        address.patchBorderless = ptr;
 
-    FIND_SIG_OR_FAIL(address.patchAllowEmptySaveNames, "75 ?? 81 C6 ?? ?? ?? ?? 57");
-    FIND_SIG_OR_FAIL(address.patchAllowBannedSaveNames, "74 ?? 8B 5C 24 ?? BE");
+    ptr = FindSignature(base, size, patchWindowKeySig);
+    if (ptr)
+        address.patchWindowKey = ptr;
 
-    // Currently optional
-    FIND_SIG(address.patchAllowMultiInstances1,
-        "74 ?? 6a ?? 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 6a");
-    FIND_SIG(address.patchAllowMultiInstances2,
-        "75 ?? 8b 0d ?? ?? ?? ?? 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 68");
+    ptr = FindSignature(base, size, bypassDiscRequirementPatchSig1);
+    address.bypassDiscRequirementPatch1 = ptr;
 
-    FIND_SIG_OR_FAIL(address.patchFog, "0f 84 ?? ?? ?? ?? 80 78");
-    FIND_SIG_OR_FAIL(address.patchForceMaxLod, "7e ?? f7 43");
-    FIND_SIG_OR_FAIL(address.patchRemoveItemFreezing, "75 ?? d9 05 ?? ?? ?? ?? d8 9e");
+    ptr = FindSignature(base, size, bypassDiscRequirementPatchSig2);
+    if (ptr) {
+        address.bypassDiscRequirementPatch2 = ptr;
+        address.bypassDiscRequirementPatch3 = ptr + 0x3E;
+    }
 
-    FIND_SIG_OR_FAIL(address.patchDefaultFarValue1,
-        "75 ?? d9 05 ?? ?? ?? ?? d9 5c 24 ?? 80 7c 24");
-    FIND_SIG_OR_FAIL(address.patchDefaultFarValue2,
-        "74 ?? d9 44 24 ?? d9 9e ?? ?? ?? ?? d9 86");
+    ptr = FindSignature(base, size, discFileDirectorySig);
+    if (ptr)
+        address.musicVideoDirectory = ReadPtr32(ptr + 0x1);
 
-    FIND_SIG_OR_FAIL(ptr, "20 41 ?? 00 c8");
-    address.defaultFarValue = ptr + 0x2;
+    ptr = FindSignature(base, size, discFileDirectoryOverwriteSig);
+    if (ptr) {
+        address.stopMusicVideoDirectoryOverwrite = ptr + 0x36;
+    }
 
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling1, "75 ?? 57 55 8b cb");
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling2, "0f 84 ?? ?? ?? ?? 8b 85 ?? ?? ?? ?? 39 98");
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling3, "7a ?? d8 97 ?? ?? ?? ?? df e0 f6 c4 ?? 7a ?? d9 e8");
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling4, "7a ?? d9 e8 d8 5b ?? df e0 f6 c4 ?? 74");
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling5, "7a ?? d8 5f");
-    FIND_SIG_OR_FAIL(address.patchRemoveCulling6,
-        "7a ?? d9 e8 d8 59 ?? df e0 f6 c4 ?? 0f 85 ?? ?? ?? ?? eb ?? dd d8 53 56 8b 74 24 ?? 8b 9e ?? ?? ?? ?? 8b 43 ?? d9 40 ?? 83 c0 ?? d8 a6 ?? ?? ?? ?? 51 d9 5c 24 ?? d9 40 ?? d8 a6 ?? ?? ?? ?? d9 5c 24 ?? d9 40 ?? d8 a6 ?? ?? ?? ?? d9 5c 24 ?? d9 44 24 ?? d9 44 24 ?? d9 44 24 ?? d9 41 ?? d9 1c ?? d9 c1 de ca d9 c2 de cb d9 c9 de c2 dc c8 de c1 d9 5c 24 ?? d9 44 24 ?? e8 ?? ?? ?? ?? d9 5c 24 ?? d9 44 24 ?? 83 ec ?? d9 5c 24 ?? 8b cf d9 83 ?? ?? ?? ?? d8 8e ?? ?? ?? ?? d9 5c 24 ?? d9 44 24 ?? d9 5c 24 ?? d9 86 ?? ?? ?? ?? d9 5c 24 ?? d9 ee");
+    ptr = FindSignature(base, size, bypassFovOverflowSig);
+    if (ptr)
+        address.bypassFovOverflow = ptr;
 
-    FIND_SIG_OR_FAIL(address.patchNoBonks,
-        "0f 85 ?? ?? ?? ?? 8b 86 ?? ?? ?? ?? 25 ?? ?? ?? ?? 33 c9 3d ?? ?? ?? ?? 75 ?? 3b cb 74");
+    ptr = FindSignature(base, size, fovSig);
+    if (ptr)
+        address.fov = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "8B 0D ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 8B 48 ?? 89 4E");
-    address.levelIdBase = ReadPtr32(ptr + 0x2);
+    ptr = FindSignature(base, size, climbFovSig);
+    if (ptr)
+        address.climbFov = ptr;
 
-    FIND_SIG_OR_FAIL(address.getID, "8b 54 24 ?? 8a 0a");
+    ptr = FindSignature(base, size, runSlideFovSig);
+    if (ptr)
+        address.runSlideFov = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "8b 15 ?? ?? ?? ?? 8b 1c 82");
-    address.playerObjects = ReadPtr32(ptr + 0x2);
+    ptr = FindSignature(base, size, patchConsoleSig);
+    if (ptr)
+        address.patchConsole = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "8b 0d ?? ?? ?? ?? 85 c9 74 ?? e8 ?? ?? ?? ?? 8b 0d ?? ?? ?? ?? 85 c9 74 ?? e8 ?? ?? ?? ?? 8b 0d ?? ?? ?? ?? 85 c9 74 ?? 8b 11 8b 42 ?? ff d0 8b 0d");
-    address.systemDatasPtr = ReadPtr32(ptr + 0x2);
+    ptr = FindSignature(base, size, patchPopupMenuSig1);
+    if (ptr)
+        address.patchPopupMenu0 = ptr;
 
-    FIND_SIG_OR_FAIL(ptr, "a1 ?? ?? ?? ?? 8b 90 ?? ?? ?? ?? 8b 80 ?? ?? ?? ?? 89 54 24");
-    address.rdrPtr = ReadPtr32(ptr + 0x1);
+    ptr = FindSignature(base, size, patchPopupMenuSig2);
+    if (ptr)
+        address.patchPopupMenu1 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveFpsCapSig);
+    if (ptr)
+        address.patchRemoveFpsCap = ptr;
+
+    ptr = FindSignature(base, size, patchInvertVerticalLookSig);
+    address.patchInvertVerticalLook = ptr;
+
+    ptr = FindSignature(base, size, patchAutoSaveSig);
+    if (ptr)
+        address.patchAutoSave = ptr - 0x6;
+
+    ptr = FindSignature(base, size, patchAllowEmptySaveNamesSig);
+    if (ptr)
+        address.patchAllowEmptySaveNames = ptr;
     
-    FIND_SIG_OR_FAIL(ptr, "8b 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? c2 ?? ?? cc cc cc cc cc cc 8b 44 24");
-    address.classMgrPtr = ReadPtr32(ptr + 0x2);
+    ptr = FindSignature(base, size, patchAllowBannedSaveNamesSig);
+    if (ptr)
+        address.patchAllowBannedSaveNames = ptr;
 
-    FIND_SIG_OR_FAIL(address.getFontPtr, "83 05 ?? ?? ?? ?? ?? 8b 54 24");
-    FIND_SIG_OR_FAIL(address.drawStringFn, "55 8b ec 83 e4 ?? 81 ec ?? ?? ?? ?? 53 56 8b 75 ?? 80 7e ?? ?? d9 46");
-    FIND_SIG_OR_FAIL(address.patchDrawFps, "e8 ?? ?? ?? ?? 8b e5 5d c2 ?? ?? cc cc cc cc cc cc cc cc cc e8");
+    ptr = FindSignature(base, size, patchAllowMultiInstancesSig1);
+    if (ptr)
+        address.patchAllowMultiInstances1 = ptr;
 
-    return true;
+    ptr = FindSignature(base, size, patchAllowMultiInstancesSig2);
+    if (ptr)
+        address.patchAllowMultiInstances2 = ptr;
+
+    ptr = FindSignature(base, size, patchFogSig);
+    if (ptr)
+        address.patchFog = ptr;
+
+    ptr = FindSignature(base, size, patchForceMaxLodSig);
+    if (ptr)
+        address.patchForceMaxLod = ptr;
+    
+    ptr = FindSignature(base, size, patchRemoveItemFreezingSig);
+    if (ptr)
+        address.patchRemoveItemFreezing = ptr;
+
+    ptr = FindSignature(base, size, patchDefaultFarValueSig1);
+    if (ptr)
+        address.patchDefaultFarValue1 = ptr;
+
+    ptr = FindSignature(base, size, patchDefaultFarValueSig2);
+    if (ptr)
+        address.patchDefaultFarValue2 = ptr;
+
+    ptr = FindSignature(base, size, defaultFarValueSig);
+    if (ptr)
+        address.defaultFarValue = ptr + 0x2;
+    
+    ptr = FindSignature(base, size, patchRemoveCullingSig1);
+    if (ptr)
+        address.patchRemoveCulling1 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveCullingSig2);
+    if (ptr)
+        address.patchRemoveCulling2 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveCullingSig3);
+    if (ptr)
+        address.patchRemoveCulling3 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveCullingSig4);
+    if (ptr)
+        address.patchRemoveCulling4 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveCullingSig5);
+    if (ptr)
+        address.patchRemoveCulling5 = ptr;
+
+    ptr = FindSignature(base, size, patchRemoveCullingSig6);
+    if (ptr)
+        address.patchRemoveCulling6 = ptr + 0xA;
+
+    ptr = FindSignature(base, size, patchNoBonksSig);
+    if (ptr)
+        address.patchNoBonks = ptr;
+
+    ptr = FindSignature(base, size, levelIdBaseSig);
+    if (ptr)
+        address.levelIdBase = ReadPtr32(ptr + 0x2);
+
+    ptr = FindSignature(base, size, getIDSig);
+    if (ptr)
+        address.getID = ptr;
+
+    ptr = FindSignature(base, size, playerObjectsSig);
+    if (ptr)
+        address.playerObjects = ReadPtr32(ptr + 0x2);
+
+    ptr = FindSignature(base, size, systemDatasPtrSig);
+    if (ptr)
+        address.systemDatasPtr = ReadPtr32(ptr + 0x2);
+
+    ptr = FindSignature(base, size, rdrPtrSig);
+    if (ptr)
+        address.rdrPtr = ReadPtr32(ptr + 0x1);
+    
+    ptr = FindSignature(base, size, classMgrPtrSig);
+    if (ptr)
+        address.classMgrPtr = ReadPtr32(ptr + 0x2);
+
+    ptr = FindSignature(base, size, getFontPtrSig);
+    if (ptr)
+        address.getFontPtr = ptr;
+    
+    ptr = FindSignature(base, size, drawStringFnSig);
+    if (ptr)
+        address.drawStringFn = ptr;
+    
+    ptr = FindSignature(base, size, patchDrawFpsSig);
+    if (ptr)
+        address.patchDrawFps = ptr;
 }
 
 bool hook(void *toHook, void *ourFunc, size_t len) {
@@ -345,8 +436,8 @@ bool hook(void *toHook, void *ourFunc, size_t len) {
     return true;
 }
 
-uintptr_t hClipCursorAddress;
-uintptr_t jmpBackAddressCursor;
+uintptr_t static hClipCursorAddress;
+uintptr_t static jmpBackAddressCursor;
 void __declspec(naked) hClipCursor() {
     __asm {
         call GetClientRect
@@ -362,7 +453,7 @@ void __declspec(naked) hClipCursor() {
     }
 }
 
-uintptr_t jmpBackAddressSetWindowPosPush;
+uintptr_t static jmpBackAddressSetWindowPosPush;
 void __declspec(naked) hSetWindowPosPushBL() {
     __asm {
         push 0x0
@@ -384,7 +475,7 @@ void __declspec(naked) hSetWindowPosPushWND() {
     }
 }
 
-uintptr_t jmpBackAddressConsoleEnable;
+uintptr_t static jmpBackAddressConsoleEnable;
 void __declspec(naked) hEnableConsole() {
     __asm {
         or dword ptr ds:[ecx+0x6C6C],eax
@@ -402,7 +493,7 @@ void __declspec(naked) hEnableConsole() {
     }
 }
 
-DWORD jmpBackAddressShowConsole;
+DWORD static jmpBackAddressShowConsole;
 void __declspec(naked) hShowConsole() {
     __asm {
         and dword ptr ds:[esi+0x6C6C],ebx
@@ -419,8 +510,8 @@ void __declspec(naked) hShowConsole() {
     }
 }
 
-uintptr_t hFpsFix1Addr;
-uintptr_t jmpBackAddressFpsFix1;
+uintptr_t static hFpsFix1Addr;
+uintptr_t static jmpBackAddressFpsFix1;
 void __declspec(naked) hFpsFix1() {
     __asm {
         mov eax, [hFpsFix1Addr]
@@ -431,8 +522,8 @@ void __declspec(naked) hFpsFix1() {
     }
 }
 
-uintptr_t jmpBackAddressFpsFix2;
-uintptr_t cleanUpFpsFix2;
+uintptr_t static jmpBackAddressFpsFix2;
+uintptr_t static cleanUpFpsFix2;
 void __declspec(naked) hFpsFix2() {
     __asm {
         mov eax, [cleanUpFpsFix2]
@@ -554,7 +645,7 @@ void patch(BYTE* ptr, BYTE* buf, size_t len) {
     VirtualProtect(ptr, len, curProtection, &curProtection);
 }
 
-void applyBasePatches(RatataRConfig& cfg) {
+void applyBasePatches(const RatataRConfig& cfg) {
     BYTE zero[] = {0x00,0x00,0x00,0x00};
     BYTE jmp[] = {0xEB};
     BYTE nop[] = {0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90};
@@ -564,7 +655,7 @@ void applyBasePatches(RatataRConfig& cfg) {
     BYTE patchWindowKey[] = {0x06};
 
     //Cursor only gets hidden when inside client area
-    patch((BYTE*)addresses.patchCursorHide, addresses.patchCursorHidePatch.data(), addresses.patchCursorHidePatch.size());
+    patch((BYTE*)addresses.patchCursorHide, patchCursorHidePatch.data(), patchCursorHidePatch.size());
     //Setting custom res
     if (cfg.displayMode != DisplayModes::Fullscreen) {
         patch((BYTE*)addresses.customResPatch1, zero, 1);
@@ -574,6 +665,7 @@ void applyBasePatches(RatataRConfig& cfg) {
         patch((BYTE*)addresses.customResPatch2, reinterpret_cast<BYTE*>(&screenW), 2);
         patch((BYTE*)addresses.customResPatch3, reinterpret_cast<BYTE*>(&screenH), 2);
     }
+
     //Initial window position
     patch((BYTE*)addresses.initialWindowPositionPatch, zero, 1);
     //Not showing window before d3d9 device is created
@@ -624,7 +716,7 @@ void applyBasePatches(RatataRConfig& cfg) {
     }
 }
 
-void applyNonSpeedrunPatches(RatataRConfig& cfg) {
+void applyNonSpeedrunPatches(const RatataRConfig& cfg) {
     // These patches will not get applied when speedrun mode is turned on!
     
     //Apply FOV
@@ -722,7 +814,7 @@ void __fastcall DrawFps() {
     Color otherPurple = { 0.1f, 0.1f, 1.0f, 1.0f };
     Color black = { 0.0f, 0.0f, 0.0f, 1.0f };
     Vec2f position = { 4.0f, -2.0f };
-    FontParam_Z fontParam;
+    FontParam_Z fontParam{};
     char fpsString[32];
     float fps = *(float*)(*rdrPtr+0xc34);
 
@@ -752,7 +844,7 @@ void __fastcall DrawFps() {
     drawStringFn(font, 0, &fontParam);
 }
 
-void ApplyHooks(RatataRConfig& cfg) {
+void ApplyHooks(const RatataRConfig& cfg) {
     DWORD hookAddressCursor = addresses.hookAddressCursor;
     DWORD hookAddressSetWindowPosPush = addresses.hookAddressSetWindowPosPush;
     DWORD hookAddressConsoleEnable = addresses.hookAddressConsoleEnable;
@@ -832,6 +924,30 @@ void ApplyHooks(RatataRConfig& cfg) {
     MH_EnableHook(MH_ALL_HOOKS);
 }
 
+bool ValidateSigScan(const PatchAddresses& addrStruct) {
+    constexpr std::array<size_t, 2> safeToIgnore{
+        offsetof(PatchAddresses, patchAllowMultiInstances1) / sizeof(PatchAddresses::patchAllowMultiInstances1),
+        offsetof(PatchAddresses, patchAllowMultiInstances2) / sizeof(PatchAddresses::patchAllowMultiInstances2)
+    };
+
+    constexpr size_t structSize = sizeof(PatchAddresses) / sizeof(uintptr_t);
+    const uintptr_t* values = reinterpret_cast<const uintptr_t*>(&addrStruct);
+    
+    for (size_t i = 0; i < structSize; i++) {
+        if (std::find(safeToIgnore.begin(), safeToIgnore.end(), i) != safeToIgnore.end())
+            continue;
+        
+        if (values[i] == 0) {
+            char buffer[256];
+            sprintf_s(buffer, sizeof(buffer), "Could not find signature %lu! The game will run without patches.", i + 1);
+            MessageBoxA(nullptr, buffer, "RatataR", MB_OK);
+            return false;
+        }
+    }
+
+    return true;
+}
+
 DWORD WINAPI MainThread(LPVOID param) {
     readyEvent = CreateEventA(nullptr, TRUE, FALSE, "RatataR_Patched");
     if (!readyEvent) {
@@ -845,7 +961,9 @@ DWORD WINAPI MainThread(LPVOID param) {
     std::string configPath = std::string((char*)moduleFileName).substr(0, pos).append("\\").append("RatataRconfig.ini");
     rootDirectory = std::string((char*)moduleFileName).substr(0, pos);
     
-    if (!getSignatures(addresses)) {
+    getSignatures(addresses);
+    
+    if (!ValidateSigScan(addresses)) {
         SetEvent(readyEvent);
         CloseHandle(readyEvent);
         return 0;
@@ -853,7 +971,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 
     ConfigHandler cfgHandler;
     cfgHandler.load(configPath);
-    RatataRConfig config = cfgHandler.getConfig();
+    const RatataRConfig config = cfgHandler.getConfig();
 
     g_EnableFrameLimit = config.maxFps > 0.0;
     g_TargetFPS = static_cast<double>(config.maxFps);
