@@ -1,10 +1,6 @@
 #include "rpc-client/levels.h"
 #include "MemoryUtils.h"
 
-DWORD levelIdBaseAddr;
-DWORD playerObjectsAddr;
-DWORD getIDAddr;
-
 int*** playerObjects = nullptr;
 int(__cdecl* getIDFn)(const char* name, int startingIndx) = nullptr;
 
@@ -67,13 +63,13 @@ constexpr int levelCount = sizeof(levelList) / sizeof(Level) - 1;
 
 void initRat()
 {
-    playerObjects = (int***)playerObjectsAddr;
-    getIDFn = (int(__cdecl*)(const char*, int))getIDAddr;
+    playerObjects = (int***)playerObjectsBase;
+    getIDFn = (int(__cdecl*)(const char*, int))getIDBase;
 }
 
 Level getLevel()
 {
-    int* levelPtr = follow_pointer_chain<int>(levelIdBaseAddr, { 0x8, 0x9C4, 0x7C });
+    int* levelPtr = follow_pointer_chain<int>(levelIdBase, { 0x8, 0x9C4, 0x7C });
     int levelID = levelPtr ? *levelPtr : 0;
 
     if (levelID < 0 || levelID > levelCount)
@@ -86,7 +82,7 @@ Level getLevel()
 
 const char* getCharName()
 {
-    int* charPtr = follow_pointer_chain<int>(playerObjectsAddr, { 0x0, 0x4 });
+    int* charPtr = follow_pointer_chain<int>(playerObjectsBase, { 0x0, 0x4 });
     int charID = charPtr ? *charPtr : -1;
 
     if (getIDFn) {

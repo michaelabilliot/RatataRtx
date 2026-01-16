@@ -9,8 +9,8 @@
 #include <time.h>
 #include <iostream>
 #include "rpc-client/discord_manager.h"
-#include "discord_rpc.h"
 #include "rpc-client/levels.h"
+#include "discord_rpc.h"
 
 static DiscordRichPresence discordPresence;
 
@@ -52,7 +52,6 @@ void DiscordMan_Startup(void)
 	Discord_UpdatePresence(&discordPresence);
 }
 
-int pass = 0;
 void DiscordMan_Update(void)
 {
 	char curArea[128];	// If the CVar is empty, use the map file name
@@ -63,14 +62,7 @@ void DiscordMan_Update(void)
 
 	discordPresence.details = getCharName();
 	discordPresence.state = curLevel.name;
-
-	if (!pass) {
-		discordPresence.largeImageKey = curImage;
-		pass++;
-	}
-	else {
-		discordPresence.largeImageKey = curLevel.imageName;
-	}
+	discordPresence.largeImageKey = curLevel.imageName;
 
 	Discord_UpdatePresence(&discordPresence);
 }

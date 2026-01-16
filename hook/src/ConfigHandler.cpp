@@ -69,9 +69,9 @@ void ConfigHandler::save(const std::string& path) const {
 
     std::string modeStr;
     switch (cfg.displayMode) {
-    case DisplayModes::Windowed: modeStr = "Windowed"; break;
-    case DisplayModes::Fullscreen: modeStr = "Fullscreen"; break;
-    default: modeStr = "Borderless";
+        case DisplayModes::Windowed: modeStr = "Windowed"; break;
+        case DisplayModes::Fullscreen: modeStr = "Fullscreen"; break;
+        default: modeStr = "Borderless";
     }
 
     WritePrivateProfileStringA(section, "displayMode", modeStr.c_str(), path.c_str());

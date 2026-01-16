@@ -27,6 +27,30 @@ typedef volatile long long VS64;
 typedef volatile float VFloat;
 typedef volatile double VDouble;
 
+struct Color {
+    float r, g, b, a;
+};
+
+struct Vec2f {
+    float x, y;
+};
+
+struct FontParam_Z {
+    char* text;
+    bool hasBorder;
+    float borderOffset;
+    Color borderColor;
+    float topBoundY;
+    float bottomBoundY;
+    Vec2f position;
+    Color bottomColor;
+    Color topColor;
+    float scale1;
+    float scale2;
+    float zOffset;
+    Vec2f finalPosition;
+};
+
 #undef S32_MIN
 #define S32_MIN -2147483648
 

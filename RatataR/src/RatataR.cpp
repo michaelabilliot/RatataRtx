@@ -3,7 +3,7 @@
 #include <string>
 #include <array>
 
-std::string GetBaseDirectory(void) {
+std::string GetBaseDirectory() {
 	char path[MAX_PATH]{};
 	if (!GetModuleFileNameA(nullptr, path, MAX_PATH))
 		return {};
@@ -103,14 +103,14 @@ bool WaitForPatchEventOrExit(HANDLE process) {
 	return result == WAIT_OBJECT_0;
 }
 
-int InjectAndRunHook(void) {
-	const char* dllName = "hook.dll";
-	const char* gameName = "overlay.exe";
+int InjectAndRunHook() {
+	constexpr char dllName[] = "hook.dll";
+	constexpr char gameName[] = "overlay.exe";
 
-	std::string baseDir = GetBaseDirectory();
+	const std::string baseDir = GetBaseDirectory();
 
-	std::string exePath = baseDir + "\\" + gameName;
-	std::string dllPath = baseDir + "\\" + dllName;
+	const std::string exePath = baseDir + "\\" + gameName;
+	const std::string dllPath = baseDir + "\\" + dllName;
 
 	PROCESS_INFORMATION pi{};
 	if (!LaunchSuspendedProcess(exePath, pi)) {
@@ -128,7 +128,11 @@ int InjectAndRunHook(void) {
 
 	if (!WaitForPatchEventOrExit(process)) {
 		MessageBoxA(nullptr, "Unexpect error.", "Error", MB_OK | MB_ICONERROR);
-		TerminateProcess(process, 0);
+
+		DWORD exitCode;
+		if (GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE)
+			TerminateProcess(process, 0);
+
 		CloseHandle(process);
 		CloseHandle(mainThread);
 		return 1;

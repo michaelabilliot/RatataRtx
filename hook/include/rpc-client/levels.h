@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <initializer_list>
 
-extern DWORD levelIdBaseAddr;
-extern DWORD playerObjectsAddr;
-extern DWORD getIDAddr;
+inline uintptr_t levelIdBase = 0;
+inline uintptr_t playerObjectsBase = 0;
+inline uintptr_t getIDBase = 0;
 
 struct Level {
     char key;

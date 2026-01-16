@@ -8,40 +8,14 @@
 #include <algorithm>
 #include "rpc-client/rpc.h"
 #include "rpc-client/levels.h"
-#include "DynArray_Z.h"
+#include "Zouna/DynArray_Z.h"
 #include "MinHook.h"
 #include "ConfigHandler.h"
 #include "MemoryUtils.h"
 #include "SigScanner.h"
 #include "SignaturePatterns.h"
 
-HANDLE readyEvent = nullptr;
-
 typedef unsigned int hdl;
-
-struct Color {
-    float r, g, b, a;
-};
-
-struct Vec2f {
-    float x, y;
-};
-
-struct FontParam_Z {
-    char* text;
-    bool hasBorder;
-    float borderOffset;
-    Color borderColor;
-    float topBoundY;
-    float bottomBoundY;
-    Vec2f position;
-    Color bottomColor;
-    Color topColor;
-    float scale1;
-    float scale2;
-    float zOffset;
-    Vec2f finalPosition;
-};
 
 static char** systemDatasPtr = nullptr;
 static char** rdrPtr = nullptr;
@@ -59,7 +33,15 @@ static bool g_TimerInitialized = false;
 static bool g_EnableFrameLimit = false;
 static double g_TargetFPS = 60.0;
 
-std::vector<BYTE> patchCursorHidePatch;
+std::vector<BYTE> CursorHidePatchBytes;
+
+struct HookEntry {
+    uintptr_t address;
+    size_t length;
+    void* detour;
+    uintptr_t* trampoline;
+    bool condition = true;
+};
 
 struct PatchAddresses
 {
@@ -214,11 +196,11 @@ void getSignatures(PatchAddresses& address)
     ptr = FindSignature(base, size, patchCursorHideSig1);
     if (ptr) {
         address.patchCursorHide = ptr;
-        patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x0F,0x85 };
+        CursorHidePatchBytes = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x0F,0x85 };
     } else {
         ptr = FindSignature(base, size, patchCursorHideSig2);
         address.patchCursorHide = ptr;
-        patchCursorHidePatch = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x75 };
+        CursorHidePatchBytes = { 0x66,0x81,0x7C,0x24,0x18,0x01,0x00,0x75 };
     }
 
     ptr = FindSignature(base, size, customResPatchSig);
@@ -305,7 +287,8 @@ void getSignatures(PatchAddresses& address)
         address.patchRemoveFpsCap = ptr;
 
     ptr = FindSignature(base, size, patchInvertVerticalLookSig);
-    address.patchInvertVerticalLook = ptr;
+    if (ptr)
+        address.patchInvertVerticalLook = ptr;
 
     ptr = FindSignature(base, size, patchAutoSaveSig);
     if (ptr)
@@ -436,24 +419,33 @@ bool hook(void *toHook, void *ourFunc, size_t len) {
     return true;
 }
 
-uintptr_t static hClipCursorAddress;
-uintptr_t static jmpBackAddressCursor;
+extern "C" {
+    uintptr_t hClipCursorAddress;
+    uintptr_t hFpsFix1Addr;
+    uintptr_t jmpBackAddressCursor;
+    uintptr_t jmpBackAddressSetWindowPosPush;
+    uintptr_t jmpBackAddressConsoleEnable;
+    uintptr_t jmpBackAddressShowConsole;
+    uintptr_t jmpBackAddressFpsFix1;
+    uintptr_t jmpBackAddressFpsFix2;
+    uintptr_t cleanUpFpsFix2;
+}
+
 void __declspec(naked) hClipCursor() {
     __asm {
         call GetClientRect
         lea ecx, [esp+0x1c]
-        mov eax, dword ptr[hClipCursorAddress]
-        mov edx, dword ptr[eax]
+        mov eax, [hClipCursorAddress]
+        mov edx, [eax]
         push 0x2
         push ecx
         push 0x0
         push edx
         call MapWindowPoints
-        jmp [jmpBackAddressCursor]
+        jmp jmpBackAddressCursor
     }
 }
 
-uintptr_t static jmpBackAddressSetWindowPosPush;
 void __declspec(naked) hSetWindowPosPushBL() {
     __asm {
         push 0x0
@@ -461,7 +453,7 @@ void __declspec(naked) hSetWindowPosPushBL() {
         sub ebp,0x6
         push eax
         push ebp
-        jmp [jmpBackAddressSetWindowPosPush]
+        jmp jmpBackAddressSetWindowPosPush
     }
 }
 
@@ -471,11 +463,10 @@ void __declspec(naked) hSetWindowPosPushWND() {
         add eax,0x9
         push eax
         push ebp
-        jmp [jmpBackAddressSetWindowPosPush]
+        jmp jmpBackAddressSetWindowPosPush
     }
 }
 
-uintptr_t static jmpBackAddressConsoleEnable;
 void __declspec(naked) hEnableConsole() {
     __asm {
         or dword ptr ds:[ecx+0x6C6C],eax
@@ -489,11 +480,10 @@ void __declspec(naked) hEnableConsole() {
         call ShowWindow
         mov eax,dword ptr ss:[esp+4]
         go_back:
-        jmp [jmpBackAddressConsoleEnable]
+        jmp jmpBackAddressConsoleEnable
     }
 }
 
-DWORD static jmpBackAddressShowConsole;
 void __declspec(naked) hShowConsole() {
     __asm {
         and dword ptr ds:[esi+0x6C6C],ebx
@@ -506,31 +496,28 @@ void __declspec(naked) hShowConsole() {
         push ebx
         call ShowWindow
         go_back:
-        jmp [jmpBackAddressShowConsole]
+        jmp jmpBackAddressShowConsole
     }
 }
 
-uintptr_t static hFpsFix1Addr;
-uintptr_t static jmpBackAddressFpsFix1;
+
 void __declspec(naked) hFpsFix1() {
     __asm {
         mov eax, [hFpsFix1Addr]
         add dword ptr[eax], 0x1
         push 0x1
         call timeBeginPeriod
-        jmp[jmpBackAddressFpsFix1]
+        jmp jmpBackAddressFpsFix1
     }
 }
 
-uintptr_t static jmpBackAddressFpsFix2;
-uintptr_t static cleanUpFpsFix2;
 void __declspec(naked) hFpsFix2() {
     __asm {
         mov eax, [cleanUpFpsFix2]
         call eax
         push 0x1
         call timeEndPeriod
-        jmp[jmpBackAddressFpsFix2]
+        jmp jmpBackAddressFpsFix2
     }
 }
 
@@ -584,7 +571,7 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
 bool HookD3D9EndScene() {
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return false;
-
+    
     WNDCLASSEXA wc = {
         sizeof(WNDCLASSEXA),
         CS_CLASSDC,
@@ -624,7 +611,7 @@ bool HookD3D9EndScene() {
         pD3D->Release();
         return false;
     }
-
+    
     void** vTable = *reinterpret_cast<void***>(pDevice);
     void* pEndScene = vTable[42];
 
@@ -655,7 +642,7 @@ void applyBasePatches(const RatataRConfig& cfg) {
     BYTE patchWindowKey[] = {0x06};
 
     //Cursor only gets hidden when inside client area
-    patch((BYTE*)addresses.patchCursorHide, patchCursorHidePatch.data(), patchCursorHidePatch.size());
+    patch((BYTE*)addresses.patchCursorHide, CursorHidePatchBytes.data(), CursorHidePatchBytes.size());
     //Setting custom res
     if (cfg.displayMode != DisplayModes::Fullscreen) {
         patch((BYTE*)addresses.customResPatch1, zero, 1);
@@ -799,142 +786,107 @@ static bool PatchCall32(void* callInstrAddr, void* newTarget)
 }
 
 void __fastcall DrawFps() {
-    if (*systemDatasPtr == NULL || *rdrPtr == NULL || *classMgrPtr == NULL || getPtr == 0 || drawStringFn == 0) {
+    auto fonts = follow_pointer_chain<DynArray_Z<hdl>>(systemDatasPtr, {0x18});
+    if (fonts == nullptr)
         return;
-    }
-    DynArray_Z<hdl>* fonts = (DynArray_Z<hdl>*)(*systemDatasPtr + 0x18);
-    if (fonts->GetSize() == 0) {
-        return;
-    }
-    char* font = getPtr(*classMgrPtr, 0, &fonts->Get(0));
-    if (font == NULL) {
-        return;
-    }
-    Color purple = { 0.4f, 0.1f, 1.0f, 1.0f };
-    Color otherPurple = { 0.1f, 0.1f, 1.0f, 1.0f };
-    Color black = { 0.0f, 0.0f, 0.0f, 1.0f };
-    Vec2f position = { 4.0f, -2.0f };
-    FontParam_Z fontParam{};
-    char fpsString[32];
-    float fps = *(float*)(*rdrPtr+0xc34);
 
+    if (fonts->GetSize() == 0)
+        return;
+
+    char* font = getPtr(*classMgrPtr, 0, &fonts->Get(0));
+    if (font == nullptr) {
+        return;
+    }
+
+    auto fpsPtr = follow_pointer_chain<float>(rdrPtr, {0xc34});
+    if (fpsPtr == nullptr)
+        return;
+
+    char fpsString[32];
     _snprintf_s(
         fpsString,
         sizeof(fpsString),
         _TRUNCATE,
         "%.0f",
-        fps
+        *fpsPtr
     );
-    fontParam.text = fpsString;
-    // possibly have an option to toggle border
-    fontParam.hasBorder = true;
-    fontParam.borderOffset = 2.0f;
-    // possibly have an option to change border color
-    fontParam.borderColor = black;
-    fontParam.topBoundY = -1.0f;
-    fontParam.bottomBoundY = -1.0f;
-    fontParam.position = position;
-    // possibly have an option to change colors
-    fontParam.bottomColor = purple;
-    fontParam.topColor = otherPurple;
-    // possibly have an option to change scale
-    fontParam.scale1 = 0.8f;
-    fontParam.scale2 = 1.0f;
-    fontParam.zOffset = 0.f;
+
+    constexpr Color purple = { 0.4f, 0.1f, 1.0f, 1.0f };
+    constexpr Color otherPurple = { 0.1f, 0.1f, 1.0f, 1.0f };
+    constexpr Color black = { 0.0f, 0.0f, 0.0f, 1.0f };
+    constexpr Vec2f position = { 4.0f, -2.0f };
+
+    FontParam_Z fontParam{
+        .text = fpsString,
+        .hasBorder = true,
+        .borderOffset = 2.0f,
+        .borderColor = black,
+        .topBoundY = -1.0f,
+        .bottomBoundY = -1.0f,
+        .position = position,
+        .bottomColor = purple,
+        .topColor = otherPurple,
+        .scale1 = 0.8f,
+        .scale2 = 1.0f,
+        .zOffset = 0.f
+    };
+
     drawStringFn(font, 0, &fontParam);
 }
 
 void ApplyHooks(const RatataRConfig& cfg) {
-    DWORD hookAddressCursor = addresses.hookAddressCursor;
-    DWORD hookAddressSetWindowPosPush = addresses.hookAddressSetWindowPosPush;
-    DWORD hookAddressConsoleEnable = addresses.hookAddressConsoleEnable;
-    DWORD hookAddressShowConsole = addresses.hookAddressShowConsole;
-    DWORD hookAddressFpsFix1 = addresses.hookAddressFpsFix1;
-    DWORD hookAddressFpsFix2 = addresses.hookAddressFpsFix2;
-    size_t hookLengthCursor = 6;
-    size_t hookLengthSetWindowPosPush = 6;
-    size_t hookLengthConsoleEnable = 6;
-    size_t hookLengthShowConsole = 6;
-    size_t hookLengthFpsFix1 = 7;
-    size_t hookLengthFpsFix2 = 5;
-    jmpBackAddressCursor = hookAddressCursor + hookLengthCursor;
-    jmpBackAddressSetWindowPosPush = hookAddressSetWindowPosPush + hookLengthSetWindowPosPush;
-    jmpBackAddressConsoleEnable = hookAddressConsoleEnable + hookLengthConsoleEnable;
-    jmpBackAddressShowConsole = hookAddressShowConsole + hookLengthShowConsole;
-    jmpBackAddressFpsFix1 = hookAddressFpsFix1 + hookLengthFpsFix1;
-    jmpBackAddressFpsFix2 = hookAddressFpsFix2 + hookLengthFpsFix2;
+    const HookEntry hooks[] = {
+        {addresses.hookAddressCursor, 6, hClipCursor, &jmpBackAddressCursor},
+        {addresses.hookAddressSetWindowPosPush, 6, hSetWindowPosPushBL, &jmpBackAddressSetWindowPosPush, cfg.displayMode == DisplayModes::Borderless},
+        {addresses.hookAddressSetWindowPosPush, 6, hSetWindowPosPushWND, &jmpBackAddressSetWindowPosPush, cfg.displayMode != DisplayModes::Fullscreen},
+        {addresses.hookAddressConsoleEnable, 6, hEnableConsole, &jmpBackAddressConsoleEnable},
+        {addresses.hookAddressShowConsole, 6, hShowConsole, &jmpBackAddressShowConsole},
+        {addresses.hookAddressFpsFix1, 7, hFpsFix1, &jmpBackAddressFpsFix1},
+        {addresses.hookAddressFpsFix2, 5, hFpsFix2, &jmpBackAddressFpsFix2}
+    };
+
+    for (auto& h : hooks) {
+        if (!h.condition)
+            continue;
+
+        *h.trampoline = h.address + h.length;
+        hook(reinterpret_cast<void*>(h.address), h.detour, h.length);
+    }
+
     hClipCursorAddress = addresses.hClipCursor;
     hFpsFix1Addr = addresses.hFpsFix1;
     cleanUpFpsFix2 = addresses.hFpsFix2CleanUp;
-    levelIdBaseAddr = addresses.levelIdBase;
-    playerObjectsAddr = addresses.playerObjects;
-    getIDAddr = addresses.getID;
+    levelIdBase = addresses.levelIdBase;
+    playerObjectsBase = addresses.playerObjects;
+    getIDBase = addresses.getID;
 
-    systemDatasPtr = (char**)addresses.systemDatasPtr;
-    rdrPtr = (char**)addresses.rdrPtr;
-    classMgrPtr = (char**)addresses.classMgrPtr;
-    getPtr = (char* (__fastcall*)(char*, int, hdl*))addresses.getFontPtr;
-    drawStringFn = (char* (__fastcall*)(char*, int, FontParam_Z*))addresses.drawStringFn;
-
-    MH_Initialize();
-
-    hook((void*)hookAddressCursor, hClipCursor, hookLengthCursor);
-    if (cfg.displayMode == DisplayModes::Borderless) {
-        hook((void*)hookAddressSetWindowPosPush, hSetWindowPosPushBL, hookLengthSetWindowPosPush);
-    }
-
-    else if (cfg.displayMode != DisplayModes::Fullscreen) {
-        hook((void*)hookAddressSetWindowPosPush, hSetWindowPosPushWND, hookLengthSetWindowPosPush);
-    }
-
-    if (cfg.console) {
-        hook((void*)hookAddressConsoleEnable, hEnableConsole, hookLengthConsoleEnable);
-        hook((void*)hookAddressShowConsole, hShowConsole, hookLengthShowConsole);
-    }
-
-    hook((void*)hookAddressFpsFix1, hFpsFix1, hookLengthFpsFix1);
-    hook((void*)hookAddressFpsFix2, hFpsFix2, hookLengthFpsFix2);
-
-    // Start rich presence thread
-    if (cfg.discordRichPresence) {
-        constexpr char rpcLibName[] = "discord-rpc.dll";
-        while (true) {
-            HMODULE hDiscord = LoadLibraryA(rpcLibName);
-            if (!hDiscord) {
-                char buffer[256];
-                sprintf_s(buffer, sizeof(buffer), "Unable to initialize Discord Rich Presence.\nMake sure to extract %s into the game directory.", rpcLibName);
-                int choice = MessageBoxA(nullptr, buffer, "RatataR", MB_RETRYCANCEL | MB_ICONERROR);
-                if (choice == IDRETRY)
-                    continue;
-                else
-                    break;
-            }
-            else {
-                CreateThread(nullptr, 0, InitRPC, nullptr, 0, nullptr);
-                break;
-            }
-        }
-    }
+    systemDatasPtr = reinterpret_cast<char**>(addresses.systemDatasPtr);
+    rdrPtr = reinterpret_cast<char**>(addresses.rdrPtr);
+    classMgrPtr = reinterpret_cast<char**>(addresses.classMgrPtr);
+    getPtr = reinterpret_cast<char*(__fastcall*)(char*, int, hdl*)>(addresses.getFontPtr);
+    drawStringFn = reinterpret_cast<char*(__fastcall*)(char*, int, FontParam_Z*)>(addresses.drawStringFn);
 
     if (cfg.displayFrameCounter) {
         PatchCall32((void*)addresses.patchDrawFps, (void*)&DrawFps);
     }
 
+    MH_Initialize();
     HookD3D9EndScene();
     MH_EnableHook(MH_ALL_HOOKS);
 }
 
 bool ValidateSigScan(const PatchAddresses& addrStruct) {
-    constexpr std::array<size_t, 2> safeToIgnore{
+    constexpr std::array<size_t, 2> sigWhitelist {
         offsetof(PatchAddresses, patchAllowMultiInstances1) / sizeof(PatchAddresses::patchAllowMultiInstances1),
         offsetof(PatchAddresses, patchAllowMultiInstances2) / sizeof(PatchAddresses::patchAllowMultiInstances2)
     };
 
-    constexpr size_t structSize = sizeof(PatchAddresses) / sizeof(uintptr_t);
+    constexpr size_t addrCount = sizeof(PatchAddresses) / sizeof(uintptr_t);
     const uintptr_t* values = reinterpret_cast<const uintptr_t*>(&addrStruct);
     
-    for (size_t i = 0; i < structSize; i++) {
-        if (std::find(safeToIgnore.begin(), safeToIgnore.end(), i) != safeToIgnore.end())
+    for (size_t i = 0; i < addrCount; i++) {
+        bool safeToIgnore = std::find(sigWhitelist.begin(), sigWhitelist.end(), i) != sigWhitelist.end();
+        if (safeToIgnore)
             continue;
         
         if (values[i] == 0) {
@@ -948,8 +900,8 @@ bool ValidateSigScan(const PatchAddresses& addrStruct) {
     return true;
 }
 
-DWORD WINAPI MainThread(LPVOID param) {
-    readyEvent = CreateEventA(nullptr, TRUE, FALSE, "RatataR_Patched");
+DWORD WINAPI HookMain(LPVOID param) {
+    HANDLE readyEvent = CreateEventA(nullptr, TRUE, FALSE, "RatataR_Patched");
     if (!readyEvent) {
         TerminateProcess(GetCurrentProcess(), 0);
         return 1;
@@ -960,9 +912,9 @@ DWORD WINAPI MainThread(LPVOID param) {
     std::string::size_type pos = std::string((char*)moduleFileName).find_last_of("\\/");
     std::string configPath = std::string((char*)moduleFileName).substr(0, pos).append("\\").append("RatataRconfig.ini");
     rootDirectory = std::string((char*)moduleFileName).substr(0, pos);
-    
+
     getSignatures(addresses);
-    
+
     if (!ValidateSigScan(addresses)) {
         SetEvent(readyEvent);
         CloseHandle(readyEvent);
@@ -981,6 +933,9 @@ DWORD WINAPI MainThread(LPVOID param) {
         applyNonSpeedrunPatches(config);
     }
     ApplyHooks(config);
+
+    if (config.discordRichPresence && InitRPC())
+        CreateThread(nullptr, 0, RPCThreadMain, nullptr, 0, nullptr);
 
     SetEvent(readyEvent);
     CloseHandle(readyEvent);

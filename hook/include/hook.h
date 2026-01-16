@@ -1,4 +1,4 @@
 #pragma once
 #include <Windows.h>
 
-DWORD WINAPI MainThread(LPVOID param);
+DWORD WINAPI HookMain(LPVOID param);
