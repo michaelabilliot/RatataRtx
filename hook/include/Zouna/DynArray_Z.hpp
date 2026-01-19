@@ -1,6 +1,6 @@
 #ifndef _DYNARRAY_Z_H_
 #define _DYNARRAY_Z_H_
-#include "Types_Z.h"
+#include "Types_Z.hpp"
 
 #define DYNARRAY_Z_EXP(exp)
 #define DYA_SIZEBITS 18

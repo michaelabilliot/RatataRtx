@@ -1,4 +1,4 @@
-#include "ConfigHandler.h"
+#include "ConfigHandler.hpp"
 #include <Windows.h>
 #include <string>
 #include <cctype>

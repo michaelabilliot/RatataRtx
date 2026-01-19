@@ -1,5 +1,5 @@
-#include "rpc-client/levels.h"
-#include "MemoryUtils.h"
+#include "rpc-client/levels.hpp"
+#include "MemoryUtils.hpp"
 
 int*** playerObjects = nullptr;
 int(__cdecl* getIDFn)(const char* name, int startingIndx) = nullptr;

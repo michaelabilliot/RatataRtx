@@ -129,10 +129,9 @@ int InjectAndRunHook() {
 	if (!WaitForPatchEventOrExit(process)) {
 		MessageBoxA(nullptr, "Unexpect error.", "Error", MB_OK | MB_ICONERROR);
 
-		DWORD exitCode;
-		if (GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE)
+		if (DWORD exitCode; GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE)
 			TerminateProcess(process, 0);
-
+		
 		CloseHandle(process);
 		CloseHandle(mainThread);
 		return 1;

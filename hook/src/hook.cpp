@@ -6,14 +6,14 @@
 #include <sstream>
 #include <d3d9.h>
 #include <algorithm>
-#include "rpc-client/rpc.h"
-#include "rpc-client/levels.h"
-#include "Zouna/DynArray_Z.h"
+#include "rpc-client/rpc.hpp"
+#include "rpc-client/levels.hpp"
+#include "Zouna/DynArray_Z.hpp"
 #include "MinHook.h"
-#include "ConfigHandler.h"
-#include "MemoryUtils.h"
-#include "SigScanner.h"
-#include "SignaturePatterns.h"
+#include "ConfigHandler.hpp"
+#include "MemoryUtils.hpp"
+#include "SigScanner.hpp"
+#include "SignaturePatterns.hpp"
 
 typedef unsigned int hdl;
 

@@ -1,5 +1,5 @@
 #include <Windows.H>
-#include "hook.h"
+#include "hook.hpp"
 
 BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD dwReason, LPVOID lpReserved) {
     switch (dwReason) {

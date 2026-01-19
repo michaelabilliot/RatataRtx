@@ -1,6 +1,6 @@
 #include <Windows.h>
 #include <stdio.h>
-#include "rpc-client/discord_manager.h"
+#include "rpc-client/discord_manager.hpp"
 
 constexpr char rpcLibName[] = "discord-rpc.dll";
 constexpr double updateFreq = 5.0;
