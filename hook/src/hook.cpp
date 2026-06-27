@@ -4,6 +4,7 @@
 #include <Psapi.h>
 #include <vector>
 #include <sstream>
+#include <cstring>
 #include <d3d9.h>
 #include <algorithm>
 #include "rpc-client/rpc.hpp"
@@ -14,6 +15,7 @@
 #include "MemoryUtils.hpp"
 #include "SigScanner.hpp"
 #include "SignaturePatterns.hpp"
+#include "RtxRemixBridge.hpp"
 
 typedef unsigned int hdl;
 
@@ -34,6 +36,102 @@ static bool g_EnableFrameLimit = false;
 static double g_TargetFPS = 60.0;
 
 std::vector<BYTE> CursorHidePatchBytes;
+
+static std::string AppendPath(const std::string& base, const char* leaf) {
+    if (base.empty())
+        return leaf;
+
+    const char last = base.back();
+    if (last == '\\' || last == '/')
+        return base + leaf;
+
+    return base + "\\" + leaf;
+}
+
+static std::string GetEnvironmentPath(const char* name) {
+    char path[MAX_PATH]{};
+    const DWORD length = GetEnvironmentVariableA(name, path, sizeof(path));
+    if (length == 0 || length >= sizeof(path))
+        return {};
+
+    return path;
+}
+
+static std::string GetTempDirectory() {
+    char path[MAX_PATH]{};
+    const DWORD length = GetTempPathA(sizeof(path), path);
+    if (length == 0 || length >= sizeof(path))
+        return {};
+
+    return path;
+}
+
+static bool EnsureDirectoryExists(const std::string& path) {
+    if (path.empty())
+        return false;
+
+    if (CreateDirectoryA(path.c_str(), nullptr))
+        return true;
+
+    return GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+static std::string GetWritableRatataRDirectory() {
+    std::string base = GetEnvironmentPath("LOCALAPPDATA");
+    if (base.empty())
+        base = GetTempDirectory();
+
+    if (base.empty())
+        return {};
+
+    const std::string dir = AppendPath(base, "RatataR");
+    return EnsureDirectoryExists(dir) ? dir : std::string{};
+}
+
+static bool WriteTextFile(const std::string& path, const char* content) {
+    HANDLE file = CreateFileA(
+        path.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+
+    const DWORD bytesToWrite = static_cast<DWORD>(std::strlen(content));
+    DWORD bytesWritten = 0;
+    const BOOL ok = WriteFile(file, content, bytesToWrite, &bytesWritten, nullptr);
+    CloseHandle(file);
+    return ok && bytesWritten == bytesToWrite;
+}
+
+static void EnsureDxvkConfigEnvironment() {
+    if (!GetEnvironmentPath("DXVK_CONFIG_FILE").empty())
+        return;
+
+    const std::string dir = GetWritableRatataRDirectory();
+    if (dir.empty())
+        return;
+
+    const std::string configPath = AppendPath(dir, "dxvk-ratatouille.conf");
+    constexpr char content[] =
+        "d3d9.psShaderModel = 2\r\n"
+        "d3d9.vsShaderModel = 2\r\n"
+        "rtx.useUnusedRenderstates = True\r\n"
+        "rtx.vertexColorStrength = 1.0\r\n"
+        "rtx.useVertexCapture = False\r\n"
+        "rtx.useVertexCapturedNormals = False\r\n"
+        "rtx.useWorldMatricesForShaders = False\r\n"
+        "rtx.orthographicIsUI = True\r\n";
+
+    if (WriteTextFile(configPath, content)) {
+        SetEnvironmentVariableA("DXVK_CONFIG_FILE", configPath.c_str());
+    }
+}
 
 struct HookEntry {
     uintptr_t address;
@@ -565,6 +663,8 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
     if (g_EnableFrameLimit)
         ApplyFrameLimit();
 
+    RtxRemixBridge::OnEndScene();
+
     return oEndScene(pDevice);
 }
 
@@ -872,6 +972,7 @@ void ApplyHooks(const RatataRConfig& cfg) {
 
     MH_Initialize();
     HookD3D9EndScene();
+    RtxRemixBridge::Install(cfg);
     MH_EnableHook(MH_ALL_HOOKS);
 }
 
@@ -927,6 +1028,8 @@ DWORD WINAPI HookMain(LPVOID param) {
 
     g_EnableFrameLimit = config.maxFps > 0.0;
     g_TargetFPS = static_cast<double>(config.maxFps);
+
+    EnsureDxvkConfigEnvironment();
 
     applyBasePatches(config);
     if (!config.speedrunMode) {

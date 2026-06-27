@@ -31,6 +31,31 @@ void ConfigHandler::load(const std::string& path) {
     LoadOption(section, "speedrunMode", &RatataRConfig::speedrunMode);
     LoadOption(section, "discordRichPresence", &RatataRConfig::discordRichPresence);
     LoadOption(section, "displayFrameCounter", &RatataRConfig::displayFrameCounter);
+    LoadOption(section, "rtxRemixBridge", &RatataRConfig::rtxRemixBridge);
+    LoadOption(section, "rtxDebugLog", &RatataRConfig::rtxDebugLog);
+    LoadOption(section, "rtxFailOpen", &RatataRConfig::rtxFailOpen);
+    LoadOption(section, "rtxBridgeLogFile", &RatataRConfig::rtxBridgeLogFile);
+    LoadOption(section, "rtxAllowUnsafeShaderWvp", &RatataRConfig::rtxAllowUnsafeShaderWvp);
+    LoadOption(section, "rtxAllowUnsafeRuntimeReplace", &RatataRConfig::rtxAllowUnsafeRuntimeReplace);
+    LoadOption(section, "rtxBridgeSubmissionMode", &RatataRConfig::rtxBridgeSubmissionMode);
+    LoadOption(section, "rtxTransformMode", &RatataRConfig::rtxTransformMode);
+    LoadOption(section, "rtxWvpRegister", &RatataRConfig::rtxWvpRegister);
+    LoadOption(section, "rtxWvpTranspose", &RatataRConfig::rtxWvpTranspose);
+    LoadOption(section, "rtxAutoLockWvpRegister", &RatataRConfig::rtxAutoLockWvpRegister);
+    LoadOption(section, "rtxVertexBridgeMode", &RatataRConfig::rtxVertexBridgeMode);
+    LoadOption(section, "rtxRepackMaxVertices", &RatataRConfig::rtxRepackMaxVertices);
+    LoadOption(section, "rtxLightBridgeMode", &RatataRConfig::rtxLightBridgeMode);
+    LoadOption(section, "rtxFixedFunctionMaterialMode", &RatataRConfig::rtxFixedFunctionMaterialMode);
+    LoadOption(section, "rtxShaderMaterialEmissiveScale", &RatataRConfig::rtxShaderMaterialEmissiveScale);
+    LoadOption(section, "rtxCaptureAllowTexturelessProxy", &RatataRConfig::rtxCaptureAllowTexturelessProxy);
+    LoadOption(section, "rtxMatrixProbeLog", &RatataRConfig::rtxMatrixProbeLog);
+    LoadOption(section, "rtxProxyGeometryFilter", &RatataRConfig::rtxProxyGeometryFilter);
+    LoadOption(section, "rtxProxyDeduplicateCommandDraws", &RatataRConfig::rtxProxyDeduplicateCommandDraws);
+    LoadOption(section, "rtxTransformAssemblyMode", &RatataRConfig::rtxTransformAssemblyMode);
+    LoadOption(section, "rtxProxyAlphaTestMode", &RatataRConfig::rtxProxyAlphaTestMode);
+    LoadOption(section, "rtxProxySkinnedMode", &RatataRConfig::rtxProxySkinnedMode);
+    LoadOption(section, "rtxProxyCameraLockMode", &RatataRConfig::rtxProxyCameraLockMode);
+    LoadOption(section, "rtxProxyUiSkyMode", &RatataRConfig::rtxProxyUiSkyMode);
 
     // Get display mode
     char displayModeBuffer[32];
@@ -66,6 +91,31 @@ void ConfigHandler::save(const std::string& path) const {
     SaveOption(section, "speedrunMode", cfg.speedrunMode);
     SaveOption(section, "discordRichPresence", cfg.discordRichPresence);
     SaveOption(section, "displayFrameCounter", cfg.displayFrameCounter);
+    SaveOption(section, "rtxRemixBridge", cfg.rtxRemixBridge);
+    SaveOption(section, "rtxDebugLog", cfg.rtxDebugLog);
+    SaveOption(section, "rtxFailOpen", cfg.rtxFailOpen);
+    SaveOption(section, "rtxBridgeLogFile", cfg.rtxBridgeLogFile);
+    SaveOption(section, "rtxAllowUnsafeShaderWvp", cfg.rtxAllowUnsafeShaderWvp);
+    SaveOption(section, "rtxAllowUnsafeRuntimeReplace", cfg.rtxAllowUnsafeRuntimeReplace);
+    SaveOption(section, "rtxBridgeSubmissionMode", cfg.rtxBridgeSubmissionMode);
+    SaveOption(section, "rtxTransformMode", cfg.rtxTransformMode);
+    SaveOption(section, "rtxWvpRegister", cfg.rtxWvpRegister);
+    SaveOption(section, "rtxWvpTranspose", cfg.rtxWvpTranspose);
+    SaveOption(section, "rtxAutoLockWvpRegister", cfg.rtxAutoLockWvpRegister);
+    SaveOption(section, "rtxVertexBridgeMode", cfg.rtxVertexBridgeMode);
+    SaveOption(section, "rtxRepackMaxVertices", cfg.rtxRepackMaxVertices);
+    SaveOption(section, "rtxLightBridgeMode", cfg.rtxLightBridgeMode);
+    SaveOption(section, "rtxFixedFunctionMaterialMode", cfg.rtxFixedFunctionMaterialMode);
+    SaveOption(section, "rtxShaderMaterialEmissiveScale", cfg.rtxShaderMaterialEmissiveScale);
+    SaveOption(section, "rtxCaptureAllowTexturelessProxy", cfg.rtxCaptureAllowTexturelessProxy);
+    SaveOption(section, "rtxMatrixProbeLog", cfg.rtxMatrixProbeLog);
+    SaveOption(section, "rtxProxyGeometryFilter", cfg.rtxProxyGeometryFilter);
+    SaveOption(section, "rtxProxyDeduplicateCommandDraws", cfg.rtxProxyDeduplicateCommandDraws);
+    SaveOption(section, "rtxTransformAssemblyMode", cfg.rtxTransformAssemblyMode);
+    SaveOption(section, "rtxProxyAlphaTestMode", cfg.rtxProxyAlphaTestMode);
+    SaveOption(section, "rtxProxySkinnedMode", cfg.rtxProxySkinnedMode);
+    SaveOption(section, "rtxProxyCameraLockMode", cfg.rtxProxyCameraLockMode);
+    SaveOption(section, "rtxProxyUiSkyMode", cfg.rtxProxyUiSkyMode);
 
     std::string modeStr;
     switch (cfg.displayMode) {
@@ -90,6 +140,19 @@ RemyFOV getFOVValues(unsigned int desired_fov) {
         .climbing = CLIMBING_RATIO * userFOV,
         .runningSliding = static_cast<float>(RUNNING_SLIDING_RATIO * userFOV)
     };
+}
+
+bool ConfigHandler::ParseBool(const char* value, bool fallback) {
+    std::string upper;
+    for (size_t i = 0; value[i] != '\0'; i++) {
+        if (!std::isspace(static_cast<unsigned char>(value[i]))) {
+            upper += static_cast<char>(std::toupper(static_cast<unsigned char>(value[i])));
+        }
+    }
+
+    if (upper == "1" || upper == "TRUE" || upper == "YES" || upper == "ON") return true;
+    if (upper == "0" || upper == "FALSE" || upper == "NO" || upper == "OFF") return false;
+    return fallback;
 }
 
 DisplayModes ConfigHandler::ParseDisplayMode(const char* value) {

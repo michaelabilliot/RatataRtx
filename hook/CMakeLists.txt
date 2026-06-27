@@ -4,6 +4,7 @@ add_library(hook
 		src/hook.cpp
 		src/ConfigHandler.cpp
 		src/MemoryUtils.cpp
+		src/RtxRemixBridge.cpp
 		src/rpc-client/discord_manager.cpp
 		src/rpc-client/levels.cpp
 		src/rpc-client/rpc.cpp

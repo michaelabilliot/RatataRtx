@@ -1,4 +1,5 @@
 build/
+Test-Files/
 .vscode/
 /.vs
 *.vcxproj
