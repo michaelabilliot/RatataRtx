@@ -1,0 +1,1 @@
+if you want to test the current stuff ive done, get a legally acquired copy of ratatouille, install remix then drag and drop the files from "compatfiles" into the same folder and launch using "RatataR.exe"
